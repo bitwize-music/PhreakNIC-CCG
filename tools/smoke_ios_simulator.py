@@ -7,6 +7,7 @@ import time
 
 
 def run(*args):
+    print("Running:", " ".join(args), flush=True)
     return subprocess.check_output(args, text=True, timeout=300)
 
 
@@ -21,7 +22,9 @@ print("Testing on", device["name"], udid, flush=True)
 if device["state"] != "Booted":
     run("xcrun", "simctl", "boot", udid)
 run("xcrun", "simctl", "bootstatus", udid, "-b")
-app = output / "simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app"
+app = (output / "simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app").resolve()
+print(run("file", str(app / "PhreakNICCCG")), flush=True)
+print(run("xcrun", "vtool", "-show-build", str(app / "PhreakNICCCG")), flush=True)
 run("xcrun", "simctl", "install", udid, str(app))
 with (output / "simulator.log").open("w") as log:
     process = subprocess.Popen(

@@ -51,5 +51,8 @@ else
 		-destination 'generic/platform=iOS Simulator' -derivedDataPath "$PWD/build/ios/simulator" \
 		CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
 	test -x build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app/PhreakNICCCG
+	# Simulator installation needs an ad-hoc signed bundle; no Apple account is involved.
+	codesign --force --sign - --timestamp=none build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app
+	codesign --verify --deep --strict build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app
 	echo "Simulator app: build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app"
 fi
