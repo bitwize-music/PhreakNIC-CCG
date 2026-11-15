@@ -37,3 +37,8 @@ The [known-bug ledger](../tests/KNOWN_BUGS.md) also records the bugs already fix
 - [review/remaining-fixes-v029](https://github.com/bitwize-music/PhreakNIC-CCG/tree/review/remaining-fixes-v029) combines all fixes, the cleanup, the separate repeatability-test fix and the known-bug suites for review. Individual `fix/*-v029` branches remain independent PRs based on v0.29.
 - Maintainers still need to review and merge the PRs and release the changes. Upstream PR CI runs separately from the successful fork runs linked above.
 - Private security findings remain outside these public submissions. Private reporting is enabled under [SECURITY.md](../SECURITY.md); no submission of those findings is recorded here.
+
+## Final upstream CI notes
+
+- Cleanup PR #75 subsequently hit the existing `v21_checks` “Count mode repeatability” flake in [upstream CI](https://github.com/Nirtom84/PhreakNIC-CCG/actions/runs/43755012010), after its fork CI passed. The test-only fix is [PR #90](https://github.com/Nirtom84/PhreakNIC-CCG/pull/90); maintainers can merge it and rerun the check. This contributor has read-only upstream permissions.
+- PRs #84 and #88 touch adjacent code at the end of `drive_bot()`. Their tested combined resolution preserves both the `answer_for()` helper and the detached-table redraw guard; it is included on the combined review branch and documented in PR #88.
