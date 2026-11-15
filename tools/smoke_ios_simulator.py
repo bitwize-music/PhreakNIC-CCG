@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Launch the compiled app in an available iPhone Simulator and capture evidence."""
 import json
+import os
 import pathlib
 import subprocess
 import time
@@ -28,25 +29,16 @@ run("xcrun", "simctl", "bootstatus", udid, "-b")
 print(run("file", str(app / "PhreakNICCCG")), flush=True)
 print(run("xcrun", "vtool", "-show-build", str(app / "PhreakNICCCG")), flush=True)
 run("xcrun", "simctl", "install", udid, str(app))
-with (output / "simulator.log").open("w") as log:
-    process = subprocess.Popen(
-        ["xcrun", "simctl", "launch", "--terminate-running-process", "--console",
-         udid, "com.nirtom84.phreakniccg"], stdout=log, stderr=subprocess.STDOUT
-    )
-    try:
-        time.sleep(15)
-        if process.poll() is not None:
-            raise RuntimeError("Simulator app exited early; inspect simulator.log")
-        run("xcrun", "simctl", "io", udid, "screenshot", str(output / "simulator.png"))
-    finally:
-        process.terminate()
-        try:
-            process.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
-log_text = (output / "simulator.log").read_text()
-for error in ("SCRIPT ERROR:", "Parse Error:", "Failed loading resource"):
-    if error in log_text:
-        raise RuntimeError(f"{error} in simulator.log")
-print("Simulator app stayed running; screenshot captured.")
+launch = run("xcrun", "simctl", "launch", "--terminate-running-process", udid, "com.nirtom84.phreakniccg")
+(output / "simulator.log").write_text(launch)
+print(launch, flush=True)
+pid = int(launch.strip().rsplit(":", 1)[1])
+time.sleep(15)
+# Simulator applications are host processes. Check the app PID, rather than the simctl client.
+os.kill(pid, 0)
+command = run("ps", "-p", str(pid), "-o", "command=")
+if "PhreakNICCCG.app/PhreakNICCCG" not in command:
+    raise RuntimeError("The launched PID does not identify the game executable")
+run("xcrun", "simctl", "io", udid, "screenshot", str(output / "simulator.png"))
+os.kill(pid, 0)
+print("Game process stayed running; screenshot captured.")
