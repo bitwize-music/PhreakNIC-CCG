@@ -28,7 +28,10 @@ godot4.7.1 --headless --path . -s tests/bugs_menu_checks.gd     # menus, stats, 
 node --test cloudflare/online/test/known_bugs.test.js            # online Worker (Node 22.13+)
 ```
 
-## Bugs with failing checks (46)
+A few findings fall under [SECURITY.md](../SECURITY.md) (online abuse limits, content shown on other players'
+screens). They're held back for private reporting and aren't listed here.
+
+## Bugs with failing checks (42)
 
 | ID | Bug | Severity | Checks | Status |
 |---|---|---|---|---|
@@ -47,15 +50,12 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 | B13 | Escape on the web main menu calls `quit()` | Medium | menu ×1 | Open |
 | B14 | Back or Escape on the match summary opens a hidden in-game menu that takes the summary's clicks | Medium | table ×2 | Open |
 | B15 | `UIStyle.compact()` re-reads settings.cfg on every call: about 1,600 file reads per phone-layout redraw | Medium | table ×1 (Linux only) | Open |
-| B16 | One client can occupy all 20 live game slots (per-IP cap is a policy choice) | Medium | worker ×1 | Open |
 | B17 | One answer resolves two stacked dialogs: "Yes" on TOCTOU's prompt also answers "Leave without saving?" | Medium | table ×3 | Open |
 | B18 | Export presets still give version 0.25 (Android and Windows) | Medium | bots ×4 | Open |
 | B20 | CI doesn't run the official-rulings checks on pull requests, and never runs bot_checks | Low–medium | bots ×2 | Open |
-| B21 | Remove seat renumbers seats, but clients keep their old seat number (the custom-deck lobby breaks) | Low | online ×2, worker ×1 | Open |
 | B22 | Start doesn't re-check the room's version after a deploy | Low | worker ×1 | Open |
 | B23 | Game end isn't detected during a TOCTOU turn that interrupted a simultaneous loss | Low | engine ×2 | Open |
 | B24 | A stolen Grass lingers when the turn counters differ (extra turns) | Low | engine ×1 | Open |
-| B25 | A player named "Seat 1" takes credit for another seat's moves in the log | Low | table ×1 | Open |
 | B26 | A win after rejoining an online game sets Fastest win from the partial turn count | Low | menu ×1 | Open |
 | B27 | Back in the deck editor throws away an unsaved deck without asking | Low | menu ×3 | Open |
 | B28 | In the tutorial, Back closes the coach instead of the open card or prompt | Low | table ×2 | Open |
@@ -75,7 +75,6 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 | B43 | Signal connections grow with every card move | Minor | table ×1 | Open |
 | B44 | The custom-deck D20 roll lingers after a refused start and into later games | Minor | worker ×3 | Open |
 | B45 | Double-tapping Start reports "servers are full" while the game is starting | Minor | worker ×1 | Open |
-| B47 | Addresses in the same IPv6 /64 don't share the failed-join limit (policy choice) | Minor | worker ×1 | Open |
 | B48 | Custom-deck bots learn which card O.P.R.A.H. drew into a hidden hand | Minor | bots ×1 | Open |
 | B55 | Leaving after being knocked out at Instant bot pace hangs the game in an endless error loop | Medium | menu ×1 | Open |
 
@@ -85,7 +84,7 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 |---|---|---|
 | B19 | Most suites pass even when SCRIPT ERRORs occur | About the test harness itself |
 | B36 | Online custom-deck games are recorded as offline and "Script Kiddie" | Blocked by B05: the client table fails before the game can finish; testable once B05 is fixed |
-| B46 | Per-IP rate limits let one person lock out a shared conference IP; the online README lists outdated limits | Per-IP keying is deliberate; documentation fix |
+| B46 | The online server README lists outdated rate-limit numbers | Documentation fix |
 | B49 | `tools/build_all.sh release` stages a debug-signed APK when the signing setup is missing | Build script |
 | B50 | README's test commands wipe real user data unless `XDG_DATA_HOME` is set | Documentation and harness |
 | B51 | Exports ship `reference/`, `decks/custom/` and the baseline bots | Export filters |
@@ -100,10 +99,6 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 - **Q2:** Rickroll's buy replacement pulls the Rickroll from any zone, including removed-from-game (`rules.gd:296-304`); Ruling 3 describes it moving from the discard pile.
 - **Q3:** Talks Fun Police treats a [Restaurant Name] Restaurant copying a 6-cost Location as cost 4 (`effects.gd:876`); Ruling 10 says "printed cost".
 - **Q4:** Altk3y and Botnet Takeover taking an opponent's card count as acquiring (`rules.gd:531-538`).
-
-## Not verifiable here
-
-- Seat tokens travel in the WebSocket URL while Workers observability is on (`wrangler.jsonc`), so they may be in Cloudflare's request logs; needs the Cloudflare account to confirm.
 
 ## Existing tests that assert the current (buggy) behaviour
 

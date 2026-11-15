@@ -167,7 +167,6 @@ func run():
  b38_close_request(backup)
  await b15_settings_reads(backup)
  await b10_b42_permanents()
- await b25_log_names(backup)
  await b14_summary_back()
  await b28_tutorial_back()
  await b29_reaction_viewers()
@@ -305,40 +304,6 @@ func b10_b42_permanents():
  verify(on_table or in_viewer or in_sheet, "B10 Phone layout: Botnet's Auto toggle can be reached on the table, in the Open board viewer or in its card sheet")
  verify(not phone_labels.is_empty() and not phone_labels.any(raw_tokens), "B42 Ability buttons in the card sheet show no raw {H}/{D} tokens (phone)")
  await clear_scene()
-
-# B25: append_log swaps "Seat %d" for names one seat at a time, so a handle like "Seat 1" is rewritten again.
-func log_lines() -> Array:
- return Array(table.log_view.get_parsed_text().split("\n", false)).map(func(line): return line.trim_prefix("> ").strip_edges())
-func b25_log_names(backup: Dictionary):
- errors.section = "B25"
- style.compact_override = false
- var old_handle = settings.handle
- var old_hero = settings.hero_id
- for handle in ["Neo", "Seat 1"]:
-  # Type the handle into the main menu's handle field.
-  var menu = load("res://scenes/menu.tscn").instantiate()
-  root.add_child(menu)
-  await frames()
-  for field in menu.find_children("*", "LineEdit", true, false):
-   if field.placeholder_text == "You":
-    field.text = handle
-    field.text_changed.emit(handle)
-  menu.queue_free()
-  await frames()
-  await new_table()
-  var p = table.engine.state.players[0]
-  var seen = log_lines().size()
-  var hacker = p.hand.filter(func(c): return c.id == "Hacking")[0]
-  card_button("hand", hacker.uid).pressed.emit()
-  await frames()
-  var played = log_lines().slice(seen).filter(func(line): return "plays Hacker" in line)
-  var shown = played[0] if not played.is_empty() else "(nothing logged)"
-  if handle == "Neo": verify(shown == "Neo plays Hacker", "control: with the handle Neo, your Hacker is logged as \"Neo plays Hacker\" (got \"%s\")" % shown)
-  else: verify(shown == "Seat 1 plays Hacker", "B25 With the handle \"Seat 1\", your Hacker is logged under your name, not a bot's (got \"%s\")" % shown)
-  await clear_scene()
- settings.handle = old_handle
- settings.hero_id = old_hero
- restore_user_files(backup)
 
 # B14: Escape / Back on the end-of-game summary opens the in-game menu at z 0 under the summary (z 50). Godot routes
 # clicks by tree order, not z_index, so the invisible menu takes them. Fix-agnostic: whatever the pointer reaches over

@@ -76,15 +76,6 @@ class SeatServer extends Node:
   peers.clear()
   waiting.clear()
   tcp.stop()
-class LobbyRoom extends Node:
- # Sends online.gd the room broadcasts the real Worker sends (index.js:152) over a loopback socket.
- var socket
- func connect_seat():
-  var pair = LoopbackTransport.pair()
-  socket = pair[1]
-  return pair[0]
- func broadcast(seats: Array):
-  socket.send({"t": "room", "code": "WXYZ", "deck_roll": [], "banned": [], "seats": seats, "host_seat": 0, "started": false, "public": false, "card_pool": "custom", "starting_life": 0, "bot_pace": 0.5})
 class PoolRoom extends Node:
  # online_ui_checks.gd's FakeRoom with a chosen card set: a real GameServer behind a loopback room socket.
  var server: GameServer
@@ -170,17 +161,6 @@ func button(node, text):
   var found = button(child, text)
   if found != null: return found
  return null
-func you_row(node):
- # The name label in the lobby row that carries the "[you]" tag.
- if node is Label and node.text == "[you]":
-  for sibling in node.get_parent().get_children():
-   if sibling is Label and sibling.text not in ["[you]", "●", "HOST"]: return sibling.text
- for child in node.get_children():
-  var found = you_row(child)
-  if found != null: return found
- return null
-func seat_info(name: String, bot: bool = false) -> Dictionary:
- return {"name": name, "hero": "", "bot": bot, "difficulty": 1, "connected": true, "deck": null}
 func new_online(factory: Callable) -> Control:
  var online = load("res://scripts/ui/online.gd").new()
  online.api = FakeAPI.new()
@@ -200,7 +180,6 @@ func run():
  await check_removed_seat()
  await check_dropped_socket()
  await check_over_message()
- await check_lobby_renumbering()
  for pool in ["2026", "2026mog", "custom"]: await check_table_pool(pool)
  # Let paced bot coroutines of the freed game servers run out before quitting.
  await create_timer(1.5).timeout
@@ -277,31 +256,6 @@ func check_over_message():
  await until(func(): return not finished.is_empty())
  verify(finished == [0] and OnlineAPI.remembered().is_empty(), "control: an over message after reconnecting finishes OnlineSession and forgets the seat")
  await finish(session, server)
-
-# ---- B21: the lobby after Remove seat renumbers a guest ----
-func check_lobby_renumbering():
- var room = LobbyRoom.new()
- root.add_child(room)
- var online = new_online(room.connect_seat)
- await frames()
- # Bob joined a custom room laid out Host / Bot / open seat, so the join reply gave him seat 2.
- online.enter({"server": "http://127.0.0.1:9", "code": "WXYZ", "seat": 2, "token": TOKEN})
- await frames()
- var before = errors.count
- room.broadcast([seat_info("Host"), seat_info("Bot", true), seat_info("Bob")])
- await frames()
- verify(errors.count == before and button(online, "Leave") != null and you_row(online.content) == "Bob", "control: a guest's custom-room lobby renders with Leave and [you] on their own seat")
- # The host pressed Remove seat on the bot: the Worker renumbers Bob to seat 1 (index.js:222-225) and broadcasts.
- # Whatever the protocol fix, a room broadcast must not crash the lobby (online.gd:367).
- before = errors.count
- room.broadcast([seat_info("Host"), seat_info("Bob")])
- await frames()
- verify(errors.count == before, "B21 the lobby renders without a script error after Remove seat renumbers the player's seat (%s)" % errors.since(before))
- verify(button(online, "Leave") != null, "B21 the renumbered guest still gets a Leave button")
- online.queue_free()
- room.queue_free()
- await frames()
- OnlineAPI.remember({})
 
 # ---- B05: online games in other card sets open the table in the wrong set ----
 func check_table_pool(pool: String):
