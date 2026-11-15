@@ -12,6 +12,8 @@ tools/build_all.sh ios-simulator  # macOS + Xcode: Simulator .app under build/io
 
 Install Godot 4.7.1 and the matching `ios.zip` export template. On Linux its directory is `~/.local/share/godot/export_templates/4.7.1.stable/`; on macOS it is `~/Library/Application Support/Godot/export_templates/4.7.1.stable/`. Set `GODOT=/path/to/Godot` if it is not installed at the build script's default path.
 
+Use Xcode 26.3 for the official Godot 4.7.1 template. The fork's first device build exposed missing SDK symbols with the runner's default Xcode 16.4; the workflow explicitly selects the installed Xcode 26.3 through `DEVELOPER_DIR`.
+
 The iOS targets are opt-in, so existing default builds and release packaging do not depend on Xcode. The preset supports iPhone and iPad on iOS 15+, uses the shared phone layout and landscape orientation, and inherits the project version. Its all-zero Team ID is an explicit placeholder for unsigned project generation; it is not an Apple signing identity.
 
 An **unsigned IPA cannot be installed directly on an ordinary iPhone**. Sign and provision it with an appropriate Apple identity/device installation tool, or configure an Apple developer team in Xcode and use its supported device/TestFlight distribution workflow. The CI build does not use Apple credentials or publish to TestFlight or the App Store.

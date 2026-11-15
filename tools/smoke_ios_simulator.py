@@ -13,7 +13,7 @@ def run(*args):
 output = pathlib.Path("build/ios")
 devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))
 device = next(
-    d for runtime, entries in devices["devices"].items() if "iOS" in runtime
+    d for runtime, entries in sorted(devices["devices"].items(), reverse=True) if "iOS" in runtime
     for d in entries if d["name"].startswith("iPhone") and d["isAvailable"]
 )
 udid = device["udid"]
