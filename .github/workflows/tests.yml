@@ -69,3 +69,49 @@ jobs:
             echo "::endgroup::"
           done
           if [ -n "$failed" ]; then echo "::error::Failed suites:$failed"; exit 1; fi
+  known-bugs:
+    # Each known bug is proven by a check that asserts the correct behaviour (tests/bugs_*_checks.gd and
+    # cloudflare/online/test/known_bugs.test.js; index in tests/KNOWN_BUGS.md). This job stays red until every
+    # listed bug is fixed; the jobs above must stay green. Each still-failing check is listed in the run summary.
+    name: Known bugs (red until fixed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GODOT_ZIP_SHA256: c7ff14fd28472c8d4f193043de30278dcf7e5241a1dcf7566b02e27addaa33ba
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Install Godot 4.7.1 (checksum-verified)
+        run: |
+          curl -fsSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip
+          echo "$GODOT_ZIP_SHA256  godot.zip" | sha256sum -c -
+          unzip -q godot.zip && mv Godot_v4.7.1-stable_linux.x86_64 "$RUNNER_TEMP/godot" && rm godot.zip
+      - name: Import project
+        run: |
+          export XDG_DATA_HOME="$RUNNER_TEMP/data"
+          "$RUNNER_TEMP/godot" --headless --path . --import || true
+      - name: Run known-bug checks
+        run: |
+          export XDG_DATA_HOME="$RUNNER_TEMP/data"
+          failed=""
+          echo "### Known-bug checks still failing" >> "$GITHUB_STEP_SUMMARY"
+          echo "::group::worker"
+          node --test --test-reporter=tap cloudflare/online/test/known_bugs.test.js > "$RUNNER_TEMP/worker.log" 2>&1 || failed="$failed worker"
+          cat "$RUNNER_TEMP/worker.log"
+          echo "::endgroup::"
+          grep -E '^not ok' "$RUNNER_TEMP/worker.log" | sed -E 's/^not ok [0-9]+ - /- worker: /' >> "$GITHUB_STEP_SUMMARY" || true
+          for f in tests/bugs_*_checks.gd; do
+            t=$(basename "$f" .gd)
+            echo "::group::$t"
+            # Capped log: a runaway suite can't fill the runner's disk.
+            timeout 600 "$RUNNER_TEMP/godot" --headless --path . -s "$f" 2>&1 | head -c 20000000 > "$RUNNER_TEMP/$t.log"
+            [ "${PIPESTATUS[0]}" = 0 ] || failed="$failed $t"
+            tail -c 200000 "$RUNNER_TEMP/$t.log"
+            echo "::endgroup::"
+            grep '^FAIL: ' "$RUNNER_TEMP/$t.log" | sed "s/^FAIL: /- $t: /" >> "$GITHUB_STEP_SUMMARY" || true
+          done
+          if [ -n "$failed" ]; then echo "::error::Known bugs still reproduce in:$failed"; exit 1; fi
