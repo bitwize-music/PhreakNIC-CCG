@@ -12,6 +12,9 @@ def run(*args):
 
 
 output = pathlib.Path("build/ios")
+app = (output / "simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app").resolve()
+if not (app / "PhreakNICCCG").is_file():
+    raise RuntimeError("Simulator executable missing; build the Simulator app successfully first")
 devices = json.loads(run("xcrun", "simctl", "list", "devices", "available", "--json"))
 device = next(
     d for runtime, entries in sorted(devices["devices"].items(), reverse=True) if "iOS" in runtime
@@ -22,7 +25,6 @@ print("Testing on", device["name"], udid, flush=True)
 if device["state"] != "Booted":
     run("xcrun", "simctl", "boot", udid)
 run("xcrun", "simctl", "bootstatus", udid, "-b")
-app = (output / "simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app").resolve()
 print(run("file", str(app / "PhreakNICCCG")), flush=True)
 print(run("xcrun", "vtool", "-show-build", str(app / "PhreakNICCCG")), flush=True)
 run("xcrun", "simctl", "install", udid, str(app))

@@ -5,6 +5,9 @@ on:
     branches: [build/apple-platforms]
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 concurrency:
   group: apple-builds-${{ github.ref }}
   cancel-in-progress: true
@@ -51,7 +54,8 @@ jobs:
           retention-days: 7
   ios:
     name: iOS IPA and Simulator
-    runs-on: macos-15
+    # Godot 4.7.1's official Simulator static library contains x86_64 objects only.
+    runs-on: macos-15-intel
     timeout-minutes: 45
     env:
       # The 4.7.1 template links newer SDK symbols absent from the image's default Xcode 16.4.

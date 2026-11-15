@@ -49,7 +49,7 @@ else
 	xcodebuild -project build/ios/project/PhreakNICCCG.xcodeproj \
 		-scheme PhreakNICCCG -configuration Release -sdk iphonesimulator \
 		-destination 'generic/platform=iOS Simulator' -derivedDataPath "$PWD/build/ios/simulator" \
-		CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+		ARCHS=x86_64 CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
 	test -x build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app/PhreakNICCCG
 	# Simulator installation needs an ad-hoc signed bundle; no Apple account is involved.
 	codesign --force --sign - --timestamp=none build/ios/simulator/Build/Products/Release-iphonesimulator/PhreakNICCCG.app
