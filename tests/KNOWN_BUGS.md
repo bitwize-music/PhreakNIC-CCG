@@ -32,7 +32,7 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 
 | ID | Bug | Severity | Checks | Status |
 |---|---|---|---|---|
-| B01 | Five Mog printings lose their effects in the Mog Variant set and in custom decks: Touch Mog doesn't stop buying, Mog's CTF Bangers adds no damage, Mogmart isn't free after heartsh8ped, pTFMOG doesn't make pTFS Heroes free, Mog's Makeshift Lectern doesn't discount Heroes | High | engine ×10 | Fixed on branch `fix/mog-printing-rules` |
+| B01 | Five Mog printings lose their effects in the Mog Variant set and in custom decks: Touch Mog doesn't stop buying, Mog's CTF Bangers adds no damage, Mogmart isn't free after heartsh8ped, pTFMOG doesn't make pTFS Heroes free, Mog's Makeshift Lectern doesn't discount Heroes | High | engine ×10 | Issue [#3](https://github.com/Nirtom84/PhreakNIC-CCG/issues/3), fix in PR [#4](https://github.com/Nirtom84/PhreakNIC-CCG/pull/4) |
 | B02 | A player who reconnects after the game ended is never told it's over (frozen board, Resume keeps coming back) | High | worker ×1 | Open |
 | B03 | A refused socket means "Reconnecting…" forever: Remove seat on a joined human, kicked while offline, host away over 60 s, room over 8 h | Medium | online ×3 | Open |
 | B04 | A nested TOCTOU reaction turn ends the outer human's reaction turn | Medium | engine ×2 | Open |
@@ -62,7 +62,7 @@ node --test cloudflare/online/test/known_bugs.test.js            # online Worker
 | B29 | Phone layout: Open board and Deck/Discard do nothing during a TOCTOU reaction turn | Low | table ×2 | Open |
 | B30 | JousterL can't put itself on top of the deck | Minor | engine ×1 | Open |
 | B31 | Clarion Inn Staff's free buy is used up by the first matching card | Minor | engine ×1 | Open |
-| B32 | What is Truth? becomes free after heartsh8ped (Walmart's "this card") | Minor | engine ×2 | Fixed with B01 |
+| B32 | What is Truth? becomes free after heartsh8ped (Walmart's "this card") | Minor | engine ×2 | Part of issue [#3](https://github.com/Nirtom84/PhreakNIC-CCG/issues/3), fix in PR [#4](https://github.com/Nirtom84/PhreakNIC-CCG/pull/4) |
 | B33 | Egg in Your Soup adds counters to every Sandwich Factory instead of one | Minor | engine ×1 | Open |
 | B34 | CRT LAN Party and Speakers Needed reshuffle without `card_moved` (no shuffle sound) | Minor | engine ×2 | Open |
 | B35 | A draw counts as a loss in lifetime stats | Minor | menu ×1 | Open |
