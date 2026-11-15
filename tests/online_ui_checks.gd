@@ -19,10 +19,12 @@ class FakeRoom extends Node:
  var index = 0
  var started = false
  var sent = []
+ var pool = "2026"
+ var deck: Dictionary = {}
  func _ready():
   server = GameServer.new()
   add_child(server)
-  server.setup([{"name": "Host", "bot": false}, {"name": "Guest", "bot": false}, {"name": "Bot", "bot": true}], "2026", 20, 42)
+  server.setup([{"name": "Host", "bot": false}, {"name": "Guest", "bot": false}, {"name": "Bot", "bot": true}], pool, 20, 42, [], 0.0, deck)
  func connect_seat():
   var pair = LoopbackTransport.pair()
   socket = pair[1]
@@ -31,7 +33,7 @@ class FakeRoom extends Node:
   if started: authenticate.call_deferred()
   return pair[0]
  func send_room():
-  socket.send({"t": "room", "code": "ABCD", "seats": [{"name": "Host", "hero": "", "bot": false, "difficulty": 0, "connected": true}, {"name": "Guest", "hero": "", "bot": false, "difficulty": 1, "connected": true}], "host_seat": 0, "started": started, "public": true, "card_pool": "2026", "starting_life": 20})
+  socket.send({"t": "room", "code": "ABCD", "seats": [{"name": "Host", "hero": "", "bot": false, "difficulty": 0, "connected": true}, {"name": "Guest", "hero": "", "bot": false, "difficulty": 1, "connected": true}], "host_seat": 0, "started": started, "public": true, "card_pool": pool, "starting_life": 20})
  func receive(data):
   sent.append(data)
   if data.t == "lobby" and data.action == "start":
@@ -61,6 +63,52 @@ class FakeRoom extends Node:
  func _exit_tree():
   if bridge != null: bridge.close()
   if socket != null: socket.close()
+class SeatSocket extends Node:
+ # The Worker's room socket on localhost. Each connection takes the next step of `plan` (the last one repeats):
+ # "refuse" answers HTTP 401 like an unknown or revoked token (Godot logs each refused handshake as an error),
+ # "limit" answers every request (sockets and the seat check) with 429 like the per-IP rate limit,
+ # "remove" accepts and closes 1000 "removed" like the host's Remove seat, "drop" accepts and then loses the
+ # connection, "keep" accepts and stays open.
+ var tcp = TCPServer.new()
+ var plan: Array = []
+ var attempts = 0
+ var refused: Array = []
+ var peers: Array = []
+ func _process(_delta):
+  while tcp.is_connection_available():
+   var stream = tcp.take_connection()
+   var step = plan[mini(attempts, plan.size() - 1)]
+   attempts += 1
+   if step in ["refuse", "limit"]: refused.append({"stream": stream, "request": "", "step": step})
+   else:
+    var peer = WebSocketPeer.new()
+    if peer.accept_stream(stream) == OK: peers.append({"peer": peer, "step": step, "opened": -1})
+  for item in refused.duplicate():
+   item.stream.poll()
+   if item.stream.get_status() != StreamPeerTCP.STATUS_CONNECTED:
+    refused.erase(item)
+    continue
+   if item.stream.get_available_bytes() > 0: item.request += item.stream.get_utf8_string(item.stream.get_available_bytes())
+   if item.request.contains("\r\n\r\n"):
+    var body = "{\"error\":\"token\"}" if item.step == "refuse" else "{\"error\":\"rate_limit\"}"
+    var status = "401 Unauthorized" if item.step == "refuse" else "429 Too Many Requests"
+    item.stream.put_data(("HTTP/1.1 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % [status, body.length(), body]).to_utf8_buffer())
+    item.stream.disconnect_from_host()
+    refused.erase(item)
+  for item in peers:
+   item.peer.poll()
+   if item.peer.get_ready_state() != WebSocketPeer.STATE_OPEN: continue
+   if item.opened < 0:
+    item.opened = Engine.get_process_frames()
+    item.peer.send_text(JSON.stringify({"t": "room", "code": "ABCD", "seats": [], "host_seat": 0, "started": false}))
+    if item.step == "remove": item.peer.close(1000, "removed")
+   elif item.step == "drop" and Engine.get_process_frames() - item.opened >= 5:
+    item.peer.close(-1)
+    item.step = "keep"
+ func stop():
+  for item in peers: item.peer.close(-1)
+  for item in refused: item.stream.disconnect_from_host()
+  tcp.stop()
 func _initialize():
  for path in ["user://settings.cfg", "user://savegame.json"]:
   user_backups[path] = FileAccess.get_file_as_bytes(path) if FileAccess.file_exists(path) else null
@@ -116,6 +164,44 @@ func fits(online, viewport):
  verify(rect.encloses(online.content.get_global_rect()), "Full online page fits " + str(viewport))
  for child in online.content.get_children():
   verify(rect.encloses(child.get_global_rect()), "Page section fits " + str(viewport))
+# The table opens on the game's card set (here sets whose cards the default set lacks) and follows new views.
+func card_set_table(api, pool: String):
+ var room = FakeRoom.new()
+ room.pool = pool
+ if pool == "custom": room.deck = JSON.parse_string(FileAccess.get_file_as_string("res://data/starter_decks.json"))[0]
+ root.add_child(room)
+ var online = load("res://scripts/ui/online.gd").new()
+ online.api = api
+ online.session = OnlineSession.new()
+ online.add_child(online.session)
+ online.session.transport_factory = room.connect_seat
+ root.add_child(online)
+ current_scene = online
+ await frames()
+ online.enter({"server": "http://127.0.0.1:9", "code": "ABCD", "seat": 0, "token": "fake"})
+ await frames()
+ room.receive({"t": "lobby", "action": "start"})
+ await frames(12)
+ var table = current_scene
+ verify(table != online and table.online_session != null, "%s: start enters the online table" % pool)
+ if table == online or table.online_session == null:
+  online.queue_free()
+ else:
+  var db = root.get_node("CardDB")
+  verify(db.selected_pool == pool and table.card_names.size() == db.pool_ids(pool).size(), "%s: the online table knows every card of its set" % pool)
+  var redrawn = [false]
+  table.auto_view_received.connect(func(): redrawn[0] = true)
+  room.server.dirty = true
+  for i in 60:
+   if redrawn[0]: break
+   await process_frame
+  verify(redrawn[0], "%s: the online table follows new views" % pool)
+  table.queue_free()
+ await frames()
+ await room.drain()
+ room.queue_free()
+ await frames()
+ OnlineAPI.remember({})
 func run():
  if FileAccess.file_exists("user://savegame.json"): DirAccess.remove_absolute(ProjectSettings.globalize_path("user://savegame.json"))
  root.get_node("Sfx").visual_effects = false
@@ -289,6 +375,40 @@ func run():
  verify(join_ui.session == null and OnlineAPI.remembered().is_empty(), "Host closure forgets seat and stops reconnect")
  join_ui.queue_free()
  await frames()
+ # Resuming a seat whose game ended while it was away: `over` arrives before any view, so no table opens.
+ var ended_room = LoopbackTransport.pair()
+ var ended_ui = load("res://scripts/ui/online.gd").new()
+ ended_ui.api = api
+ ended_ui.session = OnlineSession.new()
+ ended_ui.add_child(ended_ui.session)
+ ended_ui.session.transport_factory = func(): return ended_room[0]
+ root.add_child(ended_ui)
+ current_scene = ended_ui
+ await frames()
+ ended_ui.enter({"server": "http://127.0.0.1:9", "code": "ABCD", "seat": 1, "token": "fake"})
+ ended_room[1].send({"t": "room", "code": "ABCD", "seats": [{"name": "Host", "hero": "", "bot": false, "difficulty": 0, "connected": true}, {"name": "Guest", "hero": "", "bot": false, "difficulty": 1, "connected": true}], "host_seat": 0, "started": true, "public": true, "card_pool": "2026", "starting_life": 20})
+ ended_room[1].send({"t": "over", "winner": 0})
+ await frames()
+ verify(not ended_ui.in_lobby and ended_ui.message.text == "This game has already ended.", "Resuming a finished game returns to online home and says so")
+ verify(ended_ui.session == null and OnlineAPI.remembered().is_empty() and not ended_room[1].open, "Resuming a finished game forgets the seat and closes the socket")
+ ended_ui.queue_free()
+ await frames()
+ # A game that can't start (too many bans) ends with a reason before any view: return home with that reason.
+ var banned_room = LoopbackTransport.pair()
+ var banned_ui = load("res://scripts/ui/online.gd").new()
+ banned_ui.api = api
+ banned_ui.session = OnlineSession.new()
+ banned_ui.add_child(banned_ui.session)
+ banned_ui.session.transport_factory = func(): return banned_room[0]
+ root.add_child(banned_ui)
+ current_scene = banned_ui
+ await frames()
+ banned_ui.enter({"server": "http://127.0.0.1:9", "code": "ABCD", "seat": 1, "token": "fake"})
+ banned_room[1].send({"t": "over", "winner": -1, "reason": "banned_minimum"})
+ await frames()
+ verify(not banned_ui.in_lobby and banned_ui.message.text.begins_with("At least 40 center-deck cards"), "A game that can't start returns to online home with the reason")
+ banned_ui.queue_free()
+ await frames()
  var mismatch_ui = load("res://scripts/ui/online.gd").new()
  mismatch_ui.api = api
  root.add_child(mismatch_ui)
@@ -302,7 +422,77 @@ func run():
  await room.drain()
  verify(room.server.pending.is_empty() and room.server.driving.is_empty() and room.server.locks.is_empty(), "Fake room drains in-flight decisions before deletion")
  room.queue_free()
+ await frames()
+ api.mismatch = false
+ for pool in ["2026mog", "custom"]: await card_set_table(api, pool)
  api.queue_free()
  await frames()
+ await seat_socket_checks()
  print("Online UI checks: %d checks, %d failures" % [checks, failures])
  quit(1 if failures else 0)
+func seat_session(port: int, removed: Array = []) -> OnlineSession:
+ var session = OnlineSession.new()
+ root.add_child(session)
+ session.removed.connect(func(text): removed.append(text))
+ session.start({"server": "http://127.0.0.1:%d" % port, "code": "ABCD", "seat": 1, "token": "0123456789abcdef0123456789abcdef"})
+ return session
+func run_clock(session: OnlineSession, done: Callable):
+ # Reconnect backoff passes at once on the session's own clock.
+ for i in 3000:
+  if done.call(): return
+  await process_frame
+  if session.retry > 0: session._process(16.0)
+func seat_socket_checks():
+ var server = SeatSocket.new()
+ root.add_child(server)
+ if server.tcp.listen(0, "127.0.0.1") != OK:
+  print("Seat socket checks: SKIPPED (cannot bind localhost)")
+  server.queue_free()
+  return
+ var port = server.tcp.get_local_port()
+ # Remove seat closes 1000 "removed" and revokes the token: stop at once.
+ server.plan = ["remove", "refuse"]
+ var removed = []
+ var session = seat_session(port, removed)
+ await run_clock(session, func(): return session.stopped or server.attempts > 30)
+ verify(session.stopped and removed == ["The host removed you from the room."] and OnlineAPI.remembered().is_empty(), "The host's Remove seat returns home and forgets the seat")
+ verify(server.attempts == 1, "Remove seat doesn't reconnect (%d connections)" % server.attempts)
+ session.queue_free()
+ await frames(3)
+ # A refused upgrade looks like a network error: 8 refused sockets, then one seat check that says the seat is gone.
+ server.attempts = 0
+ server.plan = ["refuse"]
+ removed = []
+ session = seat_session(port, removed)
+ await run_clock(session, func(): return session.stopped or server.attempts > 30)
+ verify(session.stopped and removed == ["This room has closed or your seat was removed."] and OnlineAPI.remembered().is_empty(), "A seat the server keeps refusing returns home and is forgotten")
+ verify(server.attempts == 9, "A refused seat stops after 8 sockets and one HTTP check (%d connections)" % server.attempts)
+ session.queue_free()
+ await frames(3)
+ # A rate limit (or a proxy) refuses the sockets while the server is up: the seat check doesn't say "gone", so keep it.
+ server.attempts = 0
+ server.plan = ["limit"]
+ var limited = seat_session(port)
+ await run_clock(limited, func(): return server.attempts > 12 or limited.stopped)
+ verify(server.attempts > 12 and not limited.stopped and not OnlineAPI.remembered().is_empty(), "A rate-limited seat is kept and keeps retrying (%d connections)" % server.attempts)
+ limited.disconnect_game()
+ limited.queue_free()
+ await frames(3)
+ server.attempts = 0
+ server.plan = ["drop", "keep"]
+ var dropped = seat_session(port)
+ await run_clock(dropped, func(): return server.attempts >= 2 and dropped.status == "Connected" and dropped.transport.active)
+ verify(server.attempts == 2 and dropped.status == "Connected" and not dropped.stopped and not OnlineAPI.remembered().is_empty(), "A dropped connection reconnects")
+ dropped.disconnect_game()
+ dropped.queue_free()
+ server.stop()
+ server.queue_free()
+ await frames(3)
+ # Nothing listens on the port any more: an unreachable server is a network problem, so keep the seat and retry.
+ var offline = seat_session(port)
+ await run_clock(offline, func(): return offline.attempts > 10)
+ verify(offline.attempts > 10 and not offline.stopped and offline.status == "Reconnecting…" and not OnlineAPI.remembered().is_empty(), "An unreachable server keeps the seat and keeps retrying")
+ offline.disconnect_game()
+ offline.queue_free()
+ await frames(3)
+ OnlineAPI.remember({})

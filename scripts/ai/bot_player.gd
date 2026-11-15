@@ -20,19 +20,20 @@ func take_turn(p):
 		if search_budget_ms > 0: turn_search.budget_ms = search_budget_ms
 	var actions = 0
 	var started_us = Time.get_ticks_usec()
-	var pacing_us = 0
+	# Pacing delays and engine actions don't spend DEFCON's allowance: an action can wait for a human's answer.
+	var waiting_us = 0
 	var declined: Dictionary = {}
 	var random_reserve_checked = false
 	while is_instance_valid(engine) and engine.is_turn(p) and actions < MAX_ACTIONS and (not continue_turn.is_valid() or continue_turn.call()):
-		if p.difficulty == 3 and Time.get_ticks_usec() - started_us - pacing_us >= mini(DefconSearch.LIVE_TURN_MS, turn_search.budget_ms) * 1000: break
-		var pacing_started = Time.get_ticks_usec()
+		if p.difficulty == 3 and Time.get_ticks_usec() - started_us - waiting_us >= mini(DefconSearch.LIVE_TURN_MS, turn_search.budget_ms) * 1000: break
+		var wait_started = Time.get_ticks_usec()
 		if pace_provider.is_valid():
 			action_delay = float(pace_provider.call())
 		if action_delay > 0.0:
 			await engine.get_tree().create_timer(action_delay).timeout
 		elif yield_frame:
 			await engine.get_tree().process_frame
-		pacing_us += Time.get_ticks_usec() - pacing_started
+		waiting_us += Time.get_ticks_usec() - wait_started
 		if not is_instance_valid(engine) or not engine.is_turn(p) or (continue_turn.is_valid() and not continue_turn.call()): break
 		actions += 1
 		var candidates = p.hand.filter(func(c): return engine.can_play(p, c))
@@ -63,7 +64,9 @@ func take_turn(p):
 				if CustomDeck.rules_id(c.effect_id()) == "Candy Factory" and p.difficulty > 0: continue
 				if CustomDeck.rules_id(c.effect_id()) == "AI Bens AI Camry" and engine.opponents(p).all(func(q): return q.hand.is_empty()): continue
 				var before = fingerprint(p)
+				wait_started = Time.get_ticks_usec()
 				await engine.activate(p, c, ability.index)
+				waiting_us += Time.get_ticks_usec() - wait_started
 				completed()
 				if fingerprint(p) == before: declined[key] = true
 				activated = true
@@ -75,7 +78,9 @@ func take_turn(p):
 				candidates.sort_custom(func(a, b): return play_priority(p, a) > play_priority(p, b))
 			var chosen = await turn_search.choose_play(p, candidates) if turn_search != null else candidates[0]
 			if not is_instance_valid(engine) or not engine.is_turn(p): break
+			wait_started = Time.get_ticks_usec()
 			await engine.play_card(p, chosen)
+			waiting_us += Time.get_ticks_usec() - wait_started
 			completed()
 			continue
 		var buys = (engine.state.center_row + p.reserve).filter(func(c): return c != null and engine.can_buy(p, c))
@@ -104,7 +109,9 @@ func take_turn(p):
 				engine.reserve_card(p, found[0])
 				completed()
 				break
+			wait_started = Time.get_ticks_usec()
 			await engine.buy_card(p, found[0])
+			waiting_us += Time.get_ticks_usec() - wait_started
 			completed()
 			continue
 		if target != null:
@@ -113,7 +120,9 @@ func take_turn(p):
 			break
 		if not buys.is_empty():
 			if p.difficulty == 0 or purchase_value(ai, buys[0], p) >= purchase_threshold(p):
+				wait_started = Time.get_ticks_usec()
 				await engine.buy_card(p, buys[0])
+				waiting_us += Time.get_ticks_usec() - wait_started
 				completed()
 				continue
 		break
@@ -233,7 +242,7 @@ func reserve_priority(card, p) -> float:
 func ability_wins(p, card) -> bool:
 	if CustomDeck.rules_id(card.effect_id()) == "Lowes Shopping Cart": return p.hacking >= 25 - card.counters
 	if CustomDeck.rules_id(card.effect_id()) != "Bribery": return false
-	var damage = floori(float(p.hacking) / 2.0) * (1 + engine.controlled(p, "CTF Bangers").size())
+	var damage = floori(float(p.hacking) / 2.0) * (1 + engine.controlled_id(p, "CTF Bangers").size())
 	for q in engine.opponents(p):
 		if q.turn_flags.get("prevent_all", false) or not engine.controlled(q, "Military-Grade Card Encapsulation").is_empty() or not engine.controlled(q, "Phreaknic Network").is_empty(): return false
 		var effective_life = q.life

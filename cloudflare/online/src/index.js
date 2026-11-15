@@ -154,17 +154,21 @@ export class Room extends DurableObject {
   async fetch(req) {
     try {
       if(!originAllowed(req.headers.get('Origin')))fail('origin',403);
-      if(req.headers.get('Upgrade')?.toLowerCase()!=='websocket')fail('upgrade',426);
       if(this.r&&hostCloseDue(this.r))await this.closeByHost();
       if(this.closing||!this.r||roomExpired(this.r))fail('token',401);
       const t=new URL(req.url).searchParams.get('token');if(!validToken(t))fail('token',401);
       const seat=socketSeat(this.r,t);if(seat<0)fail('token',401);
+      // Seat check: a plain GET with the token answers 426 while the seat exists and 401 once it's gone, so a
+      // client whose sockets keep failing (rate limit, a proxy) can tell a revoked seat from a network problem.
+      if(req.headers.get('Upgrade')?.toLowerCase()!=='websocket')fail('upgrade',426);
       const pair=new WebSocketPair(), ws=pair[1];ws.accept();for(const [old,c]of this.clients)if(c.seat===seat){this.clients.delete(old);old.close(4000,'replaced');}this.clients.set(ws,{seat});
       this.r.emptySince=null;if(seat===this.r.host_seat)delete this.r.hostGoneAt;await this.save();if(this.closing){this.clients.delete(ws);ws.close(1000,'expired');fail('token',401);}
-      ws.addEventListener('message',e=>this.ctx.waitUntil(this.message(ws,e.data).catch(e=>this.send(ws,{t:'error',reason:e.status?e.message:'server'}))));
+      ws.addEventListener('message',e=>this.ctx.waitUntil(this.message(ws,e.data).catch(e=>this.send(ws,{t:'error',reason:e.status?e.message:'server',...e.extra}))));
       const close=()=>this.ctx.waitUntil(this.disconnected(ws));ws.addEventListener('close',close);ws.addEventListener('error',close);
       this.broadcastRoom();
       if(this.r.started&&!this.r.over){if(this.link)this.linkSend({t:'connect',seat,version:this.r.version});else this.ctx.waitUntil(this.ensure().catch(()=>{}));}
+      // A player who comes back after the game ended gets the result the others were sent.
+      if(this.r.result)this.send(ws,this.r.result);
       return new Response(null,{status:101,webSocket:pair[0]});
     }catch(e){return error(e);}
   }
@@ -193,7 +197,8 @@ export class Room extends DurableObject {
       }
       return;
     }
-    if(m.t!=='lobby')fail('lobby');if(this.starting)fail('busy',503);
+    // A second Start while the first is still claiming its slot is a double tap, not a full server.
+    if(m.t!=='lobby')fail('lobby');if(this.starting){if(m.action==='start')return;fail('busy',503);}
     if(['submit_deck','withdraw_deck'].includes(m.action)){
       if(this.r.card_pool!=='custom'||this.r.seats[c.seat].bot)fail('deck');
       const seat=this.r.seats[c.seat],credential=seat.token;const deck=m.action==='submit_deck'?await deckSubmission(m.code):null;
@@ -208,11 +213,15 @@ export class Room extends DurableObject {
     }else {
       if(c.seat!==0)fail('host',403);
       if(m.action==='start') {
+        // A deploy since the room was created: the new game server would refuse its version.
+        if(this.env.GAME_VERSION&&this.r.version!==this.env.GAME_VERSION)fail('room_version',409,{room:this.r.version});
         if(this.r.seats.length<2||!this.r.seats.some(s=>!s.bot&&s.token)||this.r.seats.some(s=>!s.bot&&!s.token))fail('seats');
-        if(this.r.card_pool==='custom'){const ranked=deckRanking(this.r.seats);if(!ranked.order.length)fail('Someone needs to submit a deck');this.r.deck_order=ranked.order;this.r.deck_groups=ranked.groups;this.r.deck_roll=ranked.lines;this.r.deck_attempt=0;}
+        const ranked=this.r.card_pool==='custom'?deckRanking(this.r.seats):null;if(ranked&&!ranked.order.length)fail('Someone needs to submit a deck');
         this.starting=true;try{
           const refusal=await lobby(this.env).claim(this.r.code,this.r.created);if(refusal)fail(refusal,503);
           if(!this.r||roomExpired(this.r)){await lobby(this.env).release(this.r?.code||'');fail('busy',503);}
+          // Only a start that goes through keeps a deck roll, and only a custom-deck one has any.
+          this.r.deck_roll=ranked?ranked.lines:[];if(ranked){this.r.deck_order=ranked.order;this.r.deck_groups=ranked.groups;this.r.deck_attempt=0;}
           this.r.started=true;await this.stat('start');await this.save(true);this.broadcastRoom();await this.ensure();return;
         }finally{this.starting=false;}
       }else if(m.action==='kick') {
@@ -313,7 +322,7 @@ export class Room extends DurableObject {
     if(m.t==='diag'){if(typeof m.text==='string')console.log(`room ${this.r.code}: ${m.text.slice(0,300)}`);}
     else if(m.t==='to'){for(const [ws,c]of this.clients)if(c.seat===m.seat)this.send(ws,m.msg);}
     else if(m.t==='snapshot'){this.r.snapshot=m.data;await this.ctx.storage.put('room',this.r);}
-    else if(m.t==='over'&&!this.r.over){this.r.over=true;await this.stat('over',undefined,m);await this.stop('over');await this.save(true);this.broadcast(m.reason?{t:'over',winner:m.winner,reason:String(m.reason)}:{t:'over',winner:m.winner});}
+    else if(m.t==='over'&&!this.r.over){this.r.over=true;this.r.result=m.reason?{t:'over',winner:m.winner,reason:String(m.reason)}:{t:'over',winner:m.winner};await this.stat('over',undefined,m);await this.stop('over');await this.save(true);this.broadcast(this.r.result);}
   }
   async closeByHost() {
     if(this.closing||!this.r||this.r.started)return;

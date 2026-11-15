@@ -20,11 +20,35 @@ test('maintenance blocks create and join before body parsing or room calls',asyn
 test('WebSocket authentication failures have identical HTTP shape',async()=>{
  for(const patch of [{r:null},{},{r:{...makeRoom().r,started:true}}]){const r=Object.assign(makeRoom(),patch);const res=await r.fetch(new Request('https://server/ws/room/AB23?token='+ 'c'.repeat(32),{headers:{Upgrade:'websocket'}}));assert.equal(res.status,401);assert.deepEqual(await res.json(),{error:'token'});}
 });
+test('seat check: a plain GET with the token tells a live seat (426) from a gone one (401)',async()=>{
+ const live=await makeRoom().fetch(new Request('https://server/ws/room/AB23?token='+'a'.repeat(32)));
+ assert.equal(live.status,426);assert.deepEqual(await live.json(),{error:'upgrade'});
+ for(const patch of [{r:null},{}]){const gone=await Object.assign(makeRoom(),patch).fetch(new Request('https://server/ws/room/AB23?token='+'c'.repeat(32)));assert.equal(gone.status,401);assert.deepEqual(await gone.json(),{error:'token'});}
+});
 test('kick revokes token, closes socket and preserves seat position',async()=>{
  const r=makeRoom(),host=sock(),guest=sock();r.clients.set(host,{seat:0});r.clients.set(guest,{seat:1});await r.message(host,JSON.stringify({t:'lobby',action:'kick',seat:1}));assert.deepEqual(guest.closed,{code:4001,reason:'kicked'});assert.equal(r.r.seats.length,2);assert.equal(r.r.seats[1].token,'');assert(!r.clients.has(guest));
 });
 test('busy start never locks room or boots container',async()=>{
  const r=makeRoom(),host=sock();r.clients.set(host,{seat:0});r.env={LOBBY:binding({claim:async()=> 'busy'})};r.ensure=()=>assert.fail('boot');await assert.rejects(()=>r.message(host,JSON.stringify({t:'lobby',action:'start'})),e=>e.message==='busy'&&e.status===503);assert(!r.r.started);assert(!r.starting);
+});
+test('Start after a deploy is refused with the room version, before claiming a slot',async()=>{
+ const originalResponse=globalThis.Response,originalPair=globalThis.WebSocketPair,listeners={},sent=[],pending=[];
+ globalThis.Response=class extends originalResponse {constructor(body,init){if(init?.status===101){super(null);Object.defineProperty(this,'status',{value:101});}else super(body,init);}};
+ globalThis.WebSocketPair=class {constructor(){this[0]=sock();this[1]=Object.assign(sock(),{accept(){},addEventListener:(type,fn)=>listeners[type]=fn,send:v=>sent.push(JSON.parse(v))});}};
+ try{
+  const r=makeRoom();r.r.version='0.26';r.ctx={waitUntil:p=>pending.push(p)};r.env={GAME_VERSION:'0.27',LOBBY:binding({claim:async()=>assert.fail('claim')})};r.ensure=()=>assert.fail('boot');
+  assert.equal((await r.fetch(new Request('https://server/ws/room/AB23?token='+'a'.repeat(32),{headers:{Upgrade:'websocket'}}))).status,101);
+  // The player is told which version the room is on (online_api.gd's room_version text).
+  listeners.message({data:JSON.stringify({t:'lobby',action:'start'})});await Promise.all(pending);
+  assert.deepEqual(sent,[{t:'error',reason:'room_version',room:'0.26'}]);assert(!r.r.started);assert(!r.starting);
+ }finally{globalThis.Response=originalResponse;globalThis.WebSocketPair=originalPair;}
+});
+test('a second Start while the first is claiming its slot is ignored, not reported as busy',async()=>{
+ const r=makeRoom(),host=sock();let release;r.clients.set(host,{seat:0});r.stat=async()=>{};r.ensure=async()=>{};r.env={LOBBY:binding({claim:()=>new Promise(resolve=>release=resolve)})};
+ const start=()=>r.message(host,JSON.stringify({t:'lobby',action:'start'})),first=start();
+ await start();release(null);await first;assert(r.r.started);
+ // Other lobby actions in that moment are still refused.
+ r.r.started=false;r.starting=true;await assert.rejects(()=>r.message(host,JSON.stringify({t:'lobby',action:'settings',public:false})),/busy/);
 });
 test('hard expiry destroys, records abandonment, closes sockets and deletes room',async()=>{
  const r=makeRoom(),events=[],ws=sock();r.r.created=Date.now()-8*3600000;r.clients.set(ws,{seat:0});r.stat=async e=>events.push(e);r.ctx={container:{destroy:async why=>events.push(why)},storage:{deleteAll:async()=>events.push('delete')}};r.env={LOBBY:binding({remove:async c=>events.push(c)})};await r.alarm();assert.deepEqual(events,['abandoned','expired','AB23','delete']);assert.equal(ws.closed.reason,'expired');assert.equal(r.r,null);assert.equal(r.clients.size,0);
@@ -40,6 +64,21 @@ test('new seat socket replaces old socket without refreshing activity',async()=>
  class UpgradeResponse extends originalResponse {constructor(body,init){if(init?.status===101){super(null);Object.defineProperty(this,'status',{value:101});this.webSocket=init.webSocket;}else super(body,init);}}
  globalThis.Response=UpgradeResponse;globalThis.WebSocketPair=class {constructor(){this[0]=sock();this[1]=Object.assign(sock(),{accept(){},addEventListener(){}});}};
  try{const r=makeRoom(),old=sock();r.clients.set(old,{seat:1});r.save=async active=>assert(!active);const res=await r.fetch(new Request('https://server/ws/room/AB23?token='+'b'.repeat(32),{headers:{Upgrade:'websocket'}}));assert.equal(res.status,101);assert.deepEqual(old.closed,{code:4000,reason:'replaced'});assert.equal(r.clients.size,1);assert.equal(r.r.lastActivity,123);}finally{globalThis.Response=originalResponse;globalThis.WebSocketPair=originalPair;Date.now=originalNow;}
+});
+test('a player who reconnects after the game ended is sent the result',async()=>{
+ const originalResponse=globalThis.Response,originalPair=globalThis.WebSocketPair;let received;
+ globalThis.Response=class extends originalResponse {constructor(body,init){if(init?.status===101){super(null);Object.defineProperty(this,'status',{value:101});}else super(body,init);}};
+ globalThis.WebSocketPair=class {constructor(){this[0]=sock();this[1]=Object.assign(sock(),{accept(){},addEventListener(){},send:v=>received.push(JSON.parse(v))});}};
+ try{
+  for(const [over,result]of [[{t:'over',winner:0,turns:9},{t:'over',winner:0}],[{t:'over',winner:-1,reason:'restore_failed'},{t:'over',winner:-1,reason:'restore_failed'}]]){
+   const r=makeRoom(),host=sock(),sent=[];host.send=v=>sent.push(JSON.parse(v));r.r.started=true;r.clients.set(host,{seat:0});r.stat=async()=>{};r.stop=async()=>{};
+   await r.linkMessage(over);assert.deepEqual(sent,[result]);
+   // The guest was offline when the game ended: reconnecting tells them, and doesn't boot the game server again.
+   received=[];r.ensure=()=>assert.fail('boot');r.linkSend=()=>assert.fail('link');
+   const res=await r.fetch(new Request('https://server/ws/room/AB23?token='+'b'.repeat(32),{headers:{Upgrade:'websocket'}}));
+   assert.equal(res.status,101);assert.deepEqual(received,[result]);
+  }
+ }finally{globalThis.Response=originalResponse;globalThis.WebSocketPair=originalPair;}
 });
 
 const {default:site}=await import('../../site/src/index.js');
@@ -203,4 +242,16 @@ test('multiple submissions roll on the Worker, broadcast ties and send highest d
  crypto.getRandomValues=a=>{a[0]=rolls.shift();return a;};
  try{await r.message(host,JSON.stringify({t:'lobby',action:'start'}));}finally{crypto.getRandomValues=original;}
  assert.equal(setups[0].custom_deck_code,'PNDK1.private1');assert.deepEqual(r.r.deck_order,[1,0]);assert(messages.at(-1).deck_roll.join(' ').includes('Tie at 15'));assert(!JSON.stringify(messages).includes('PNDK1.'));
+});
+test('the deck roll is kept only for a custom start that goes through',async()=>{
+ const r=makeRoom(),host=sock(),original=crypto.getRandomValues.bind(crypto),rolls=[14,3,12,5];let claims=0;
+ r.r.card_pool='custom';r.r.seats.forEach((s,i)=>{s.name='p'+i;s.deck={name:'Deck'+i,count:60,code:'PNDK1.private'+i};});r.clients.set(host,{seat:0});r.stat=async()=>{};r.ensure=async()=>{};r.env={LOBBY:binding({claim:async()=>claims++?null:'busy'})};
+ const start=()=>r.message(host,JSON.stringify({t:'lobby',action:'start'}));
+ crypto.getRandomValues=a=>{a[0]=rolls.shift();return a;};
+ try{
+  await assert.rejects(start,/busy/);assert.deepEqual(r.r.deck_roll??[],[]);
+  await start();assert.equal(r.r.deck_roll.length,1);assert(r.r.deck_roll[0].startsWith('Deck roll (D20): p0 '));
+ }finally{crypto.getRandomValues=original;}
+ // Back in the lobby (every deck turned out invalid), a standard-set start shows no roll.
+ r.r.started=false;r.r.card_pool='2026';await start();assert.deepEqual(r.r.deck_roll,[]);
 });
