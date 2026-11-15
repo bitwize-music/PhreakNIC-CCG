@@ -29,7 +29,25 @@ See [Godot's iOS export documentation](https://docs.godotengine.org/en/stable/tu
 - Downloads the official Godot 4.7.1 Mac editor and templates and checks their pinned SHA-256 hashes.
 - Builds a universal Mac ZIP on both Intel and Apple Silicon runners, verifies its ad-hoc signature, launches the packaged executable headlessly, and runs the affected platform/UI checks.
 - Compiles an unsigned ARM64 device IPA using the iPhoneOS SDK.
-- Builds the separate Simulator executable, launches it on an available iPhone Simulator and captures its console output and screenshot.
+- Builds the separate Simulator executable, installs it on an available iPhone Simulator, waits for the launched game PID, checks that the process stays alive and captures a screenshot.
 - Uploads ZIPs, the unsigned IPA, checksums and logs as Actions artifacts for seven days.
 
 Standard GitHub-hosted runners are [free for public repositories](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job). A Simulator launch is a smoke check; it does not establish real-device playability or App Store readiness. CI artifacts are preview builds rather than published game releases.
+
+## Verified fork build, November 15, 2026
+
+[Apple builds run 43761358237](https://github.com/bitwize-music/PhreakNIC-CCG/actions/runs/43761358237) tests source commit `d1df701` on the fork's `build/apple-platforms` branch:
+
+- Intel and Apple Silicon Mac jobs passed export, signature verification, headless launch and 102 platform/UI checks per runner.
+- The ARM64 iPhoneOS IPA compiled with Xcode 26.3. The downloaded artifact passed its SHA-256 checksum check.
+- The x86_64 Simulator app compiled, installed and launched. `simctl` returned the game PID and the helper verified that the actual game process stayed alive before and after the screenshot.
+- The inspected screenshot shows the game launch splash. Menu rendering and gameplay have **not** been verified on iOS; manual device testing remains necessary.
+
+Artifacts are `macos-macos-15`, `macos-macos-15-intel` and `ios-unsigned-preview`. The last contains the unsigned device IPA, checksum, build logs, Simulator launch PID and screenshot. Download from the run's artifacts section, or from Linux with:
+
+```bash
+gh run download 43761358237 --repo bitwize-music/PhreakNIC-CCG \
+  --name ios-unsigned-preview --dir build/apple-ci/ios
+```
+
+Earlier fork runs exposed an old default Xcode SDK, the misleading Simulator architecture manifest and insufficient pipeline/launch checks. Those checks now use strict Bash pipeline handling, an Intel Simulator build and the launched application's PID. The separate existing `Known bugs (red until fixed)` job remains a different check from these Apple builds.

@@ -4,6 +4,10 @@ The `macOS` Godot export preset produces one application for Intel x86_64 and Ap
 
 This is a preview port. A Linux export and archive inspection cannot verify launch, rendering, input, audio or Gatekeeper behavior on a real Mac. Complete the Mac checks below before describing it as tested.
 
+## Fork validation on Macs
+
+The `Apple builds` workflow also builds the app on standard Intel and Apple Silicon GitHub macOS runners. Each job verifies the bundle with `codesign --verify --deep --strict`, launches the packaged executable headlessly and runs `v07_checks` and `v08_checks` (102 checks per runner). These checks have passed on both architectures. They do not cover interactive rendering, input, audio or the downloaded-app Gatekeeper experience; those checks still need manual testing.
+
 ## Initial Linux validation
 
 - Godot 4.7.1 release export completed successfully using the official, SHA-256-verified template archive.
